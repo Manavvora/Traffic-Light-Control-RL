@@ -1,70 +1,72 @@
-import os
-os.environ['TF_CPP_MIN_LOG_LEVEL']='2'  # kill warning about tensorflow
-import tensorflow as tf
+import torch
+import torch.nn as nn
+import torch.optim as optim
 import numpy as np
 import sys
+import os
 
-from tensorflow import keras
-from tensorflow.keras import layers
-from tensorflow.keras import losses
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.utils import plot_model
-from tensorflow.keras.models import load_model
+
+class TrainModel(nn.Module):
+    def __init__(self, num_layers, width, input_dim, output_dim):
+        super(TrainModel, self).__init__()
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.fc1 = nn.Linear(input_dim, width)
+        self.hidden_layers = nn.ModuleList([nn.Linear(width, width) for _ in range(num_layers)])
+        self.fc2 = nn.Linear(width, output_dim)
+        self.relu = nn.ReLU()
+
+    def forward(self, x):
+        x = self.fc1(x)
+        x = self.relu(x)
+        for layer in self.hidden_layers:
+            x = layer(x)
+            x = self.relu(x)
+        x = self.fc2(x)
+        return x
 
 
 class TrainModel:
     def __init__(self, num_layers, width, batch_size, learning_rate, input_dim, output_dim):
-        self._input_dim = input_dim
-        self._output_dim = output_dim
-        self._batch_size = batch_size
-        self._learning_rate = learning_rate
-        self._model = self._build_model(num_layers, width)
-
-
-    def _build_model(self, num_layers, width):
-        """
-        Build and compile a fully connected deep neural network
-        """
-        inputs = keras.Input(shape=(self._input_dim,))
-        x = layers.Dense(width, activation='relu')(inputs)
-        for _ in range(num_layers):
-            x = layers.Dense(width, activation='relu')(x)
-        outputs = layers.Dense(self._output_dim, activation='linear')(x)
-
-        model = keras.Model(inputs=inputs, outputs=outputs, name='my_model')
-        model.compile(loss=losses.mean_squared_error, optimizer=Adam(lr=self._learning_rate))
-        return model
-    
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.batch_size = batch_size
+        self.learning_rate = learning_rate
+        self.model = TrainModel(num_layers, width, input_dim, output_dim)
+        self.criterion = nn.MSELoss()
+        self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
 
     def predict_one(self, state):
-        """
-        Predict the action values from a single state
-        """
-        state = np.reshape(state, [1, self._input_dim])
-        return self._model.predict(state)
-
+        state = torch.from_numpy(state).float().unsqueeze(0)
+        with torch.no_grad():
+            return self.model(state).numpy()
 
     def predict_batch(self, states):
-        """
-        Predict the action values from a batch of states
-        """
-        return self._model.predict(states)
-
+        states = torch.from_numpy(states).float()
+        with torch.no_grad():
+            return self.model(states).numpy()
 
     def train_batch(self, states, q_sa):
-        """
-        Train the nn using the updated q-values
-        """
-        self._model.fit(states, q_sa, epochs=1, verbose=0)
-
+        self.model.train()
+        states = torch.from_numpy(states).float()
+        q_sa = torch.from_numpy(q_sa).float()
+        self.optimizer.zero_grad()
+        predictions = self.model(states)
+        loss = self.criterion(predictions, q_sa)
+        loss.backward()
+        self.optimizer.step()
 
     def save_model(self, path):
-        """
-        Save the current model in the folder as h5 file and a model architecture summary as png
-        """
-        self._model.save(os.path.join(path, 'trained_model.h5'))
-        plot_model(self._model, to_file=os.path.join(path, 'model_structure.png'), show_shapes=True, show_layer_names=True)
+        torch.save(self.model.state_dict(), os.path.join(path, 'trained_model.pth'))
+        dummy_input = torch.randn(1, self.input_dim)
+        traced_model = torch.jit.trace(self.model, dummy_input)
+        traced_model.save(os.path.join(path, 'trained_model.pt'))
 
+    @classmethod
+    def load_model(cls, path, num_layers, width, input_dim, output_dim):
+        model = cls(num_layers, width, 1, 1, input_dim, output_dim)
+        model.model.load_state_dict(torch.load(os.path.join(path, 'trained_model.pth')))
+        return model
 
     @property
     def input_dim(self):
@@ -83,30 +85,13 @@ class TrainModel:
 
 class TestModel:
     def __init__(self, input_dim, model_path):
-        self._input_dim = input_dim
-        self._model = self._load_my_model(model_path)
-
-
-    def _load_my_model(self, model_folder_path):
-        """
-        Load the model stored in the folder specified by the model number, if it exists
-        """
-        model_file_path = os.path.join(model_folder_path, 'trained_model.h5')
-        
-        if os.path.isfile(model_file_path):
-            loaded_model = load_model(model_file_path)
-            return loaded_model
-        else:
-            sys.exit("Model number not found")
-
+        self.input_dim = input_dim
+        self.model = torch.jit.load(os.path.join(model_path, 'trained_model.pt'))
 
     def predict_one(self, state):
-        """
-        Predict the action values from a single state
-        """
-        state = np.reshape(state, [1, self._input_dim])
-        return self._model.predict(state)
-
+        state = torch.from_numpy(state).float().unsqueeze(0)
+        with torch.no_grad():
+            return self.model(state).numpy()
 
     @property
     def input_dim(self):
