@@ -4,6 +4,7 @@ from __future__ import print_function
 import os
 import datetime
 from shutil import copyfile
+import numpy as np
 
 from training_simulation import Simulation
 from generator import TrafficGenerator
@@ -57,16 +58,33 @@ if __name__ == "__main__":
         config['training_epochs']
     )
     
-    episode = 0
+    counter = 0
     timestamp_start = datetime.datetime.now()
+    num_runs = 10
+    reward_multiple_runs = np.zeros((num_runs,config['total_episodes']))
+    return_multiple_runs = np.zeros((num_runs,config['total_episodes']))
+    delay_multiple_runs = np.zeros((num_runs,config['total_episodes']))
+    queue_length_multiple_runs = np.zeros((num_runs,config['total_episodes']))
     
-    while episode < config['total_episodes']:
-        print('\n----- Episode', str(episode+1), 'of', str(config['total_episodes']))
-        epsilon = 1.0 - (episode / config['total_episodes'])  # set the epsilon for this episode according to epsilon-greedy policy
-        simulation_time, training_time = Simulation.run(episode, epsilon)  # run the simulation
-        print('Simulation time:', simulation_time, 's - Training time:', training_time, 's - Total:', round(simulation_time+training_time, 1), 's')
-        episode += 1
 
+    for n_run in range(num_runs):
+        print(f"Starting run number {n_run+1}")
+        print("-"*25)
+        episode = 0
+        while episode < config['total_episodes']:
+            print('\n----- Episode', str(episode+1), 'of', str(config['total_episodes']))
+            epsilon = 1.0 - (episode / config['total_episodes'])  # set the epsilon for this episode according to epsilon-greedy policy
+            simulation_time, training_time, episode_reward, episode_return, episode_cumulative_delay, episode_queue_length = Simulation.run(episode, epsilon)  # run the simulation
+            print(episode_reward[counter])
+            reward_multiple_runs[n_run,episode] = episode_reward[counter]
+            return_multiple_runs[n_run,episode] = episode_return[counter]
+            delay_multiple_runs[n_run,episode] = episode_cumulative_delay[counter]
+            queue_length_multiple_runs[n_run,episode] = episode_queue_length[counter]
+            print('Simulation time:', simulation_time, 's - Training time:', training_time, 's - Total:', round(simulation_time+training_time, 1), 's')
+            episode += 1
+            counter += 1
+    
+    print(reward_multiple_runs)
     print("\n----- Start time:", timestamp_start)
     print("----- End time:", datetime.datetime.now())
     print("----- Session info saved at:", path)
@@ -75,6 +93,7 @@ if __name__ == "__main__":
 
     copyfile(src='training_settings.ini', dst=os.path.join(path, 'training_settings.ini'))
 
-    Visualization.save_data_and_plot(data=Simulation.reward_store, filename='reward', xlabel='Episode', ylabel='Cumulative negative reward')
-    Visualization.save_data_and_plot(data=Simulation.cumulative_wait_store, filename='delay', xlabel='Episode', ylabel='Cumulative delay (s)')
-    Visualization.save_data_and_plot(data=Simulation.avg_queue_length_store, filename='queue', xlabel='Episode', ylabel='Average queue length (vehicles)')
+    Visualization.save_data_and_plot(data=reward_multiple_runs, filename='reward', xlabel='Episode', ylabel='Cumulative negative reward')
+    Visualization.save_data_and_plot(data=return_multiple_runs, filename='return', xlabel='Episode', ylabel='Discounted return')
+    Visualization.save_data_and_plot(data=delay_multiple_runs, filename='delay', xlabel='Episode', ylabel='Cumulative delay (s)')
+    Visualization.save_data_and_plot(data=queue_length_multiple_runs, filename='queue', xlabel='Episode', ylabel='Average queue length (vehicles)')

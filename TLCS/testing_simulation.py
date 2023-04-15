@@ -28,6 +28,9 @@ class Simulation:
         self._num_actions = num_actions
         self._reward_episode = []
         self._queue_length_episode = []
+        self._return_episode = 0
+        self._waiting_times_episode = []
+        self._policy = []
 
 
     def run(self, episode):
@@ -43,12 +46,14 @@ class Simulation:
 
         # inits
         self._step = 0
+        self._reward_episode = []
+        self._queue_length_episode = []
         self._waiting_times = {}
         old_total_wait = 0
         old_action = -1 # dummy init
+        iters = 0
 
         while self._step < self._max_steps:
-
             # get current state of the intersection
             current_state = self._get_state()
 
@@ -59,7 +64,7 @@ class Simulation:
 
             # choose the light phase to activate, based on the current state of the intersection
             action = self._choose_action(current_state)
-
+            self._policy.append(action)
             # if the chosen phase is different from the last phase, activate the yellow phase
             if self._step != 0 and old_action != action:
                 self._set_yellow_phase(old_action)
@@ -74,13 +79,17 @@ class Simulation:
             old_total_wait = current_total_wait
 
             self._reward_episode.append(reward)
+            self._waiting_times_episode.append(current_total_wait)
 
         #print("Total reward:", np.sum(self._reward_episode))
         traci.close()
         simulation_time = round(timeit.default_timer() - start_time, 1)
+        # policy = lambda s : 
 
-        return simulation_time
+        return simulation_time 
 
+    # def get_policy(self):
+    #     for 
 
     def _simulate(self, steps_todo):
         """

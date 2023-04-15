@@ -3,6 +3,7 @@ from __future__ import print_function
 
 import os
 from shutil import copyfile
+import numpy as np
 
 from testing_simulation import Simulation
 from generator import TrafficGenerator
@@ -43,13 +44,29 @@ if __name__ == "__main__":
         config['num_actions']
     )
 
-    print('\n----- Test episode')
-    simulation_time = Simulation.run(config['episode_seed'])  # run the simulation
-    print('Simulation time:', simulation_time, 's')
+    num_runs = 1
+    reward_multiple_runs =[]
+    queue_length_multiple_runs = []
+    policy_multiple_runs = []
+    waiting_times_multiple_runs = []
 
+    for n_runs in range(num_runs):
+        print(f'Starting run number {n_runs}')
+        print('-'*25)
+        print('\n----- Test episode')
+        simulation_time = Simulation.run(config['episode_seed'])  # run the simulation
+        reward_multiple_runs.append(Simulation._reward_episode) 
+        queue_length_multiple_runs.append(Simulation._queue_length_episode)
+        policy_multiple_runs.append(Simulation._policy)
+        waiting_times_multiple_runs.append(Simulation._waiting_times_episode)
+        print('Simulation time:', simulation_time, 's')
+
+    # print(reward_multiple_runs)
     print("----- Testing info saved at:", plot_path)
 
     copyfile(src='testing_settings.ini', dst=os.path.join(plot_path, 'testing_settings.ini'))
 
-    Visualization.save_data_and_plot(data=Simulation.reward_episode, filename='reward', xlabel='Action step', ylabel='Reward')
-    Visualization.save_data_and_plot(data=Simulation.queue_length_episode, filename='queue', xlabel='Step', ylabel='Queue lenght (vehicles)')
+    Visualization.save_data_and_plot_test(data=reward_multiple_runs[0], filename='reward', xlabel='Action step', ylabel='Reward',x_data=np.arange(len(Simulation._reward_episode))+1)
+    Visualization.save_data_and_plot_test(data=queue_length_multiple_runs[0], filename='queue', xlabel='Step', ylabel='Queue length (vehicles)',x_data=np.arange(config['max_steps'])+1)
+    Visualization.save_data_and_plot_test(data=policy_multiple_runs[0], filename='policy', xlabel='Step', ylabel='Action',x_data=np.arange(len(Simulation._policy))+1)
+    Visualization.save_data_and_plot_test(data=waiting_times_multiple_runs[0], filename='delay', xlabel='Step', ylabel='Total Waiting Time (seconds)',x_data=np.arange(len(Simulation._waiting_times_episode))+1)

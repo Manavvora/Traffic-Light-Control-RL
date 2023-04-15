@@ -29,6 +29,7 @@ class Simulation:
         self._num_states = num_states
         self._num_actions = num_actions
         self._reward_store = []
+        self._return_store = []
         self._cumulative_wait_store = []
         self._avg_queue_length_store = []
         self._training_epochs = training_epochs
@@ -51,9 +52,11 @@ class Simulation:
         self._sum_neg_reward = 0
         self._sum_queue_length = 0
         self._sum_waiting_time = 0
+        self.G = 0
         old_total_wait = 0
         old_state = -1
         old_action = -1
+        iters = 0
 
         while self._step < self._max_steps:
 
@@ -64,7 +67,7 @@ class Simulation:
             # waiting time = seconds waited by a car since the spawn in the environment, cumulated for every car in incoming lanes
             current_total_wait = self._collect_waiting_times()
             reward = old_total_wait - current_total_wait
-
+            iters += 1
             # saving the data into the memory
             if self._step != 0:
                 self._Memory.add_sample((old_state, old_action, reward, current_state))
@@ -86,9 +89,10 @@ class Simulation:
             old_action = action
             old_total_wait = current_total_wait
 
-            # saving only the meaningful reward to better see if the agent is behaving correctly
+            # saving only the meaningful reward and return to better see if the agent is behaving correctly
             if reward < 0:
                 self._sum_neg_reward += reward
+                self.G += (self._gamma**(iters-1))*reward
 
         self._save_episode_stats()
         print("Total reward:", self._sum_neg_reward, "- Epsilon:", round(epsilon, 2))
@@ -101,7 +105,7 @@ class Simulation:
             self._replay()
         training_time = round(timeit.default_timer() - start_time, 1)
 
-        return simulation_time, training_time
+        return simulation_time, training_time, self._reward_store, self._return_store, self._cumulative_wait_store, self._avg_queue_length_store
 
 
     def _simulate(self, steps_todo):
@@ -287,12 +291,16 @@ class Simulation:
         self._reward_store.append(self._sum_neg_reward)  # how much negative reward in this episode
         self._cumulative_wait_store.append(self._sum_waiting_time)  # total number of seconds waited by cars in this episode
         self._avg_queue_length_store.append(self._sum_queue_length / self._max_steps)  # average number of queued cars per step, in this episode
+        self._return_store.append(self.G) # total discounted return for this episode
 
 
     @property
     def reward_store(self):
         return self._reward_store
-
+    
+    @property
+    def return_store(self):
+        return self._return_store
 
     @property
     def cumulative_wait_store(self):
