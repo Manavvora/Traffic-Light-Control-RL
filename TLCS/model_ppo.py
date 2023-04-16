@@ -4,20 +4,19 @@ import torch.optim as optim
 import numpy as np
 import os
 import sys
-from utils import import_train_configuration
+from utils_ppo import import_train_configuration
 from rollout_buffer import RolloutBuffer
-from torch.distributions import categorical
-from torch.distributions import multivariate_normal
+from torch.distributions import Categorical
+from torch.distributions import MultivariateNormal
 
 
-config = import_train_configuration(config_file='training_settings.ini')
+config = import_train_configuration(config_file='training_settings_ppo.ini')
 
-class TrainModel(nn.Module):
-    def __init__(self, batch_size, learning_rate_actor, leraning_rate_critic, input_dim, output_dim, eps_clip):
+class TrainModel_PPO(nn.Module):
+    def __init__(self, learning_rate_actor, leraning_rate_critic, input_dim, output_dim, eps_clip):
         super().__init__()
         self.input_dim = input_dim
         self.output_dim = output_dim
-        self.batch_size = batch_size
         self.lr_actor = learning_rate_actor
         self.lr_critic = leraning_rate_critic
         self.eps_clip = eps_clip
@@ -53,19 +52,19 @@ class TrainModel(nn.Module):
     
     def act(self,state):
         action_probs = self.actor(state)
-        dist = categorical(action_probs)
+        dist = Categorical(action_probs)
         action = dist.sample()
         action_logprob = dist.log_prob(action)
-        state_val = self.crictic(state)
+        state_val = self.critic(state)
 
         return action.detach(), action_logprob.detach(), state_val.detach()
     
     def evaluate(self, state, action):
         action_probs = self.actor(state)
-        dist = categorical(action_probs)
+        dist = Categorical(action_probs)
         action_logprobs = dist.log_prob(action)
         dist_entropy = dist.entropy()
-        state_values = self.crictic(state)
+        state_values = self.critic(state)
 
         return action_logprobs, state_values, dist_entropy
     
@@ -84,27 +83,26 @@ class TrainModel(nn.Module):
         loss.mean().backward()
         self.optimizer.step()
     
-    def save_model(self, path):
-        torch.save(self.model.state_dict(), os.path.join(path, 'trained_actor_model.pt'))
+    def save_actor_model(self, path):
+        torch.save(self.actor.state_dict(), os.path.join(path, 'trained_actor_model.pt'))
 
-    def load_model(self, path):
-        self.model.load_state_dict(torch.load(path))
-        self.model.eval()
+    def load_actor_model(self, path):
+        self.actor.load_state_dict(torch.load(path))
+        self.actor.eval()
 
 
-class TestModel:
+class TestModel_PPO:
     def __init__(self, input_dim, model_path):
         self.input_dim = input_dim
         self.model = self._load_my_model(model_path)
 
 
     def _load_my_model(self, model_folder_path):
-        model_file_path = os.path.join(model_folder_path, 'trained_model.pt')
+        model_file_path = os.path.join(model_folder_path, 'trained_actor_model.pt')
         
         if os.path.isfile(model_file_path):
             loaded_model_state_dict = torch.load(model_file_path)
-            model = TrainModel(input_dim=self.input_dim, output_dim=config['num_actions'], batch_size=config['batch_size'], learning_rate=config['learning_rate'], num_layers=config['num_layers'], width=config['width_layers'])
-            loaded_model_state_dict = {f"model.{k}": v for k, v in loaded_model_state_dict.items()}
+            model = TrainModel_PPO(input_dim=self.input_dim, output_dim=config['num_actions'], learning_rate_actor=config['learning_rate_actor'], leraning_rate_critic=config['learning_rate_critic'], eps_clip=config['eps_clip']).actor
             model.load_state_dict(loaded_model_state_dict)
             model.eval()
             return model

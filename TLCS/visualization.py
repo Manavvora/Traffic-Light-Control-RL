@@ -1,11 +1,11 @@
 import matplotlib.pyplot as plt
 import os
 import numpy as np
-from utils import import_train_configuration
+from utils_ppo import import_train_configuration
 from testing_simulation import Simulation 
 # from training_simulation import Simulation as Simulation_train
 
-config = import_train_configuration(config_file='training_settings.ini')
+config = import_train_configuration(config_file='training_settings_ppo.ini')
 
 class Visualization:
     def __init__(self, path, dpi):

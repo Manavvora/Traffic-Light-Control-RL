@@ -3,7 +3,6 @@ import numpy as np
 import random
 import timeit
 import os
-import torch
 
 # phase codes based on environment.net.xml
 PHASE_NS_GREEN = 0  # action 0 code 00
@@ -17,14 +16,9 @@ PHASE_EWL_YELLOW = 7
 
 
 class Simulation_PPO:
-    def __init__(self, Model, opt_epochs, RolloutBuffer, TrafficGen, sumo_cmd, gamma, max_steps, green_duration, yellow_duration, num_states, num_actions):
-        self._policy = Model
-        self._old_policy = Model
-        self._old_policy.load_state_dict(self._policy.state_dict())
-        self._opt_epochs = opt_epochs
-        self._buffer = RolloutBuffer
+    def __init__(self, Model, TrafficGen, sumo_cmd, max_steps, green_duration, yellow_duration, num_states, num_actions):
+        self._Model = Model
         self._TrafficGen = TrafficGen
-        self._gamma = gamma
         self._step = 0
         self._sumo_cmd = sumo_cmd
         self._max_steps = max_steps
@@ -32,15 +26,16 @@ class Simulation_PPO:
         self._yellow_duration = yellow_duration
         self._num_states = num_states
         self._num_actions = num_actions
-        self._reward_store = []
-        self._return_store = []
-        self._cumulative_wait_store = []
-        self._avg_queue_length_store = []
+        self._reward_episode = []
+        self._queue_length_episode = []
+        self._return_episode = 0
+        self._waiting_times_episode = []
+        self._policy = []
 
 
     def run(self, episode):
         """
-        Runs an episode of simulation, then starts a training session
+        Runs the testing simulation
         """
         start_time = timeit.default_timer()
 
@@ -51,18 +46,14 @@ class Simulation_PPO:
 
         # inits
         self._step = 0
+        self._reward_episode = []
+        self._queue_length_episode = []
         self._waiting_times = {}
-        self._sum_neg_reward = 0
-        self._sum_queue_length = 0
-        self._sum_waiting_time = 0
-        self.G = 0
         old_total_wait = 0
-        old_state = -1
-        old_action = -1
+        old_action = -1 # dummy init
         iters = 0
 
         while self._step < self._max_steps:
-
             # get current state of the intersection
             current_state = self._get_state()
 
@@ -70,12 +61,10 @@ class Simulation_PPO:
             # waiting time = seconds waited by a car since the spawn in the environment, cumulated for every car in incoming lanes
             current_total_wait = self._collect_waiting_times()
             reward = old_total_wait - current_total_wait
-            self._buffer.rewards.append(reward)
-            iters += 1
-            
+
             # choose the light phase to activate, based on the current state of the intersection
             action = self._choose_action(current_state)
-
+            self._policy.append(action)
             # if the chosen phase is different from the last phase, activate the yellow phase
             if self._step != 0 and old_action != action:
                 self._set_yellow_phase(old_action)
@@ -86,30 +75,25 @@ class Simulation_PPO:
             self._simulate(self._green_duration)
 
             # saving variables for later & accumulate reward
-            old_state = current_state
             old_action = action
             old_total_wait = current_total_wait
 
-            # saving only the meaningful reward and return to better see if the agent is behaving correctly
-            if reward < 0:
-                self._sum_neg_reward += reward
-                self.G += (self._gamma**(iters-1))*reward
+            self._reward_episode.append(reward)
+            self._waiting_times_episode.append(current_total_wait)
 
-        self._save_episode_stats()
-        print("Total reward:", self._sum_neg_reward)
+        #print("Total reward:", np.sum(self._reward_episode))
         traci.close()
         simulation_time = round(timeit.default_timer() - start_time, 1)
+        # policy = lambda s : 
 
-        print("Training...")
-        start_time = timeit.default_timer()
-        self._update()
-        training_time = round(timeit.default_timer() - start_time, 1)
+        return simulation_time 
 
-        return simulation_time, training_time, self._reward_store, self._return_store, self._cumulative_wait_store, self._avg_queue_length_store
-    
+    # def get_policy(self):
+    #     for 
+
     def _simulate(self, steps_todo):
         """
-        Execute steps in sumo while gathering statistics
+        Proceed with the simulation in sumo
         """
         if (self._step + steps_todo) >= self._max_steps:  # do not do more steps than the maximum allowed number of steps
             steps_todo = self._max_steps - self._step
@@ -118,9 +102,8 @@ class Simulation_PPO:
             traci.simulationStep()  # simulate 1 step in sumo
             self._step += 1 # update the step counter
             steps_todo -= 1
-            queue_length = self._get_queue_length()
-            self._sum_queue_length += queue_length
-            self._sum_waiting_time += queue_length # 1 step while wating in queue means 1 second waited, for each car, therefore queue_lenght == waited_seconds
+            queue_length = self._get_queue_length() 
+            self._queue_length_episode.append(queue_length)
 
 
     def _collect_waiting_times(self):
@@ -143,18 +126,9 @@ class Simulation_PPO:
 
     def _choose_action(self, state):
         """
-        Choose action according to old policy
+        Pick the best action known based on the current state of the env
         """
-        with torch.no_grad():
-                state = torch.FloatTensor(state)
-                action, action_logprob, state_val = self._old_policy.act(state)
-            
-        self._buffer.states.append(state)
-        self._buffer.actions.append(action)
-        self._buffer.logprobs.append(action_logprob)
-        self._buffer.state_values.append(state_val)
-
-        return action.item()
+        return np.argmax(self._Model.predict_one(state))
 
 
     def _set_yellow_phase(self, old_action):
@@ -169,6 +143,8 @@ class Simulation_PPO:
         """
         Activate the correct green light combination in sumo
         """
+
+
         if action_number == 0:
             traci.trafficlight.setPhase("TL", PHASE_NS_GREEN)
         elif action_number == 1:
@@ -261,64 +237,14 @@ class Simulation_PPO:
         return state
 
 
-    def _update(self):
-        """
-        Monte Carlo estimate of returns
-        """
-        rewards = []
-        discounted_reward = 0
-        for reward in reversed(self._buffer.rewards):
-            # if is_terminal:
-            #     discounted_reward = 0
-            discounted_reward = reward + (self._gamma * discounted_reward)
-            rewards.insert(0, discounted_reward)
-
-        # Normalizing the rewards
-        rewards = torch.tensor(rewards, dtype=torch.float32)
-        # rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-7)
-        # print(f'Hey2:{rewards}')
-
-        # convert list to tensor
-        old_states = torch.squeeze(torch.stack(self._buffer.states, dim=0)).detach()
-        old_actions = torch.squeeze(torch.stack(self._buffer.actions, dim=0)).detach()
-        old_logprobs = torch.squeeze(torch.stack(self._buffer.logprobs, dim=0)).detach()
-        old_state_values = torch.squeeze(torch.stack(self._buffer.state_values, dim=0)).detach()
-
-        # calculate advantages
-        advantages = rewards.detach() - old_state_values.detach()
-        advantages = (advantages - advantages.mean())/(advantages.std()+1e-5)
-
-        for i in range(self._opt_epochs):
-            self._policy.train(old_states, old_actions, old_logprobs, rewards, advantages)
-        
-        self._old_policy.load_state_dict(self._policy.state_dict())
-
-        self._buffer.clear()
-
-
-    def _save_episode_stats(self):
-        """
-        Save the stats of the episode to plot the graphs at the end of the session
-        """
-        self._reward_store.append(self._sum_neg_reward)  # how much negative reward in this episode
-        self._cumulative_wait_store.append(self._sum_waiting_time)  # total number of seconds waited by cars in this episode
-        self._avg_queue_length_store.append(self._sum_queue_length / self._max_steps)  # average number of queued cars per step, in this episode
-        self._return_store.append(self.G) # total discounted return for this episode
+    @property
+    def queue_length_episode(self):
+        return self._queue_length_episode
 
 
     @property
-    def reward_store(self):
-        return self._reward_store
-    
-    @property
-    def return_store(self):
-        return self._return_store
-
-    @property
-    def cumulative_wait_store(self):
-        return self._cumulative_wait_store
+    def reward_episode(self):
+        return self._reward_episode
 
 
-    @property
-    def avg_queue_length_store(self):
-        return self._avg_queue_length_store
+
